@@ -4281,10 +4281,13 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
   function normalizeProxyUrl(raw) {
     var px = trim(String(raw || ''));
     if (!px) return '';
+    if (px.charAt(0) === '/') {
+      px = window.location.protocol + '//' + window.location.host + px;
+    }
     var split = /^(https?:\/\/[^?#]+\?(?:[^#]*&)?url=)(?:https?(?::\/\/|%3A%2F%2F).*)$/i.exec(px);
     if (split) return split[1];
-    if (/^https?:\/\/[^\/?#]+\/?$/i.test(px) && px.indexOf('{url}') < 0) {
-      return px.replace(/\/+$/, '') + '/?url=';
+    if (/^https?:\/\/[^?#]+(?:\/proxy|\/)?$/i.test(px) && px.indexOf('{url}') < 0) {
+      return px.replace(/\/+$/, '') + (px.slice(-6).toLowerCase() === '/proxy' ? '?url=' : '/?url=');
     }
     return px;
   }
@@ -8289,7 +8292,7 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
     if (qXl === '1') setXlMode(1, true);
     if (qProxy) {
       if (qProxy === 'off' || qProxy === '0') { S.cfg.proxy = ''; saveCfg(); }
-      else if (/^https?:\/\//i.test(qProxy)) { S.cfg.proxy = normalizeProxyUrl(qProxy); saveCfg(); }
+      else if (/^(?:https?:\/\/|\/)/i.test(qProxy)) { S.cfg.proxy = normalizeProxyUrl(qProxy); saveCfg(); }
     }
     if (qM3u && /^https?:\/\//i.test(qM3u)) {
       var qId = 'p_url_' + sig(qM3u).replace(/[^a-z0-9]/gi, ''), qFound = getPanel(qId);
