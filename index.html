@@ -3323,7 +3323,7 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
     mode: 'player', prevMode: 'player', focus: 'channels', barBtn: 1, barFrom: 'groups',
     started: false, stall: 0, lastT: -1, retry: 0, userPaused: false,
     num: '', asp: 0, sf: 0, exitArm: false,
-    cfg: { profile: 0, stall: 4, first: 10, bg: 1, upDir: -1, pin: '', refH: 6, logo: 1, match: 0, pre: 0, xl: 0, autoFailover: 1, autoNext: 1, epgOff: 0, subStyle: 0 },
+    cfg: { profile: 0, stall: 4, first: 10, bg: 1, upDir: -1, pin: '', refH: 6, logo: 1, match: 0, pre: 0, xl: 0, autoFailover: 1, autoNext: 1, epgOff: 0, subStyle: 0, proxy: '' },
     log: [], logDirty: false,
     stats: { starts: 0, retries: 0, stalls: 0, stallMs: 0, ttfSum: 0, ttfN: 0 },
     t0: 0, frozenSince: 0, stallLogged: false, lastGood: 0, resumeAt: 0, retrying: false,
@@ -3478,16 +3478,18 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
     }
   }
   function _ozAttachNative(sUrl) {
+    var playUrl = (S.cfg && S.cfg.proxy && isMixedHttpOnHttps(sUrl)) ? proxifyUrl(sUrl) : sUrl;
     S.engineMode = /\.m3u8(\?|$)/i.test(sUrl) ? 'Yerel HLS <video>' : 'Yerel <video>';
-    video.src = sUrl;
+    video.src = playUrl;
     video.load();
     safePlay(true);
   }
   function _ozAttachMedia(url) {
     _ozDestroyHls();
     var myTok = ++_ozPlayToken;
-    var sUrl = String(url || '');
-    var isM3u8 = /\.m3u8(\?|$)/i.test(sUrl);
+    var rawUrl = String(url || '');
+    var sUrl = (S.cfg && S.cfg.proxy && isMixedHttpOnHttps(rawUrl)) ? proxifyUrl(rawUrl) : rawUrl;
+    var isM3u8 = /\.m3u8(\?|$)/i.test(rawUrl);
     if (IS_HTTP_TV && !IS_WEBOS && isM3u8 && CAN_HLSJS_ENV) {
       _ozEnsureHls(function (supported) {
         if (myTok !== _ozPlayToken || S.torn) return;
@@ -3499,7 +3501,7 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
               backBufferLength: 30,
               maxBufferLength: 30
             });
-            var nativeTried = false;
+            var nativeTried = false, httpsTried = false;
             _ozHls = hls;
             S.engineMode = 'hls.js 1.5.8 (MSE)';
             hls.on(window.Hls.Events.MANIFEST_PARSED, function () {
@@ -3508,6 +3510,13 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
             hls.on(window.Hls.Events.ERROR, function (ev, data) {
               if (!data || !data.fatal || _ozHls !== hls) return;
               if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) {
+                var upg = (!httpsTried && isMixedHttpOnHttps(sUrl)) ? httpsUpgradeUrl(sUrl) : '';
+                if (upg) {
+                  httpsTried = true;
+                  sUrl = upg;
+                  log('retry', 'HTTPS sayfada HTTP akış → HTTPS deneniyor');
+                  try { hls.loadSource(upg); return; } catch (ehs) {}
+                }
                 var canNat = false;
                 try { canNat = !!(video.canPlayType && video.canPlayType('application/vnd.apple.mpegurl')); } catch (ec) {}
                 if (!nativeTried && !S.everPlayed && S.retry === 0 && canNat) {
@@ -3820,6 +3829,7 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
       if (c.autoNext !== undefined) S.cfg.autoNext = c.autoNext ? 1 : 0;
       if (c.epgOff !== undefined) S.cfg.epgOff = parseInt(c.epgOff, 10) || 0;
       if (c.subStyle !== undefined) S.cfg.subStyle = parseInt(c.subStyle, 10) || 0;
+      if (c.proxy !== undefined) S.cfg.proxy = trim(String(c.proxy || ''));
       if (c.xlUserSet && c.xl !== undefined) S.cfg.xl = c.xl ? 1 : 0;
       else if (document.body && document.body.className && document.body.className.indexOf('xl') > -1) S.cfg.xl = 1;
       else if (c.xl !== undefined) S.cfg.xl = c.xl ? 1 : 0;
@@ -4165,19 +4175,24 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
     var i;
     for (i = 0; i < 3; i++) $('af' + i).className = (i === 0 ? 'fld' : 'btn') + (i === S.af ? ' foc' : '');
   }
-  function askText(title, label, cb) {
+  function askText(title, label, cb, opts) {
     if (!isMenu(S.mode)) S.prevMode = S.mode;
-    S.ask = { cb: cb, ret: S.mode };
+    opts = opts || {};
+    S.ask = { cb: cb, ret: S.mode, allowEmpty: !!opts.allowEmpty };
     S.mode = 'ask'; S.af = 0;
     $('askTitle').textContent = title;
     $('askLbl').textContent = label;
-    $('inAsk').value = '';
+    if ($('inAsk')) {
+      $('inAsk').maxLength = opts.maxLen || 30;
+      $('inAsk').value = opts.val !== undefined ? String(opts.val) : '';
+    }
     $('ask').style.display = 'block';
     paintAsk();
   }
   function closeAsk() {
     var a = S.ask;
     $('ask').style.display = 'none';
+    if ($('inAsk')) $('inAsk').maxLength = 30;
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     S.ask = null;
     if (a) S.mode = a.ret;
@@ -4185,7 +4200,7 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
   }
   function askSave() {
     var v = trim($('inAsk').value), a;
-    if (!v) { toast('Ad boş olamaz', 1500); return; }
+    if (!v && !(S.ask && S.ask.allowEmpty)) { toast('Ad boş olamaz', 1500); return; }
     a = closeAsk();
     if (a) a.cb(v);
   }
@@ -4248,6 +4263,19 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
   function isMixedHttpOnHttps(url) {
     return window.location.protocol === 'https:' && /^http:\/\//i.test(String(url || ''));
   }
+  function proxifyUrl(u) {
+    var px = (S.cfg && S.cfg.proxy) ? trim(String(S.cfg.proxy)) : '', s = String(u || '');
+    if (!px || !/^https?:\/\//i.test(s)) return s;
+    if (s.indexOf(px) === 0) return s;
+    if (px.indexOf('{url}') > -1) return px.replace('{url}', encodeURIComponent(s));
+    if (px.charAt(px.length - 1) === '=' || px.charAt(px.length - 1) === '?') return px + encodeURIComponent(s);
+    return px.replace(/\/+$/, '') + '/' + s;
+  }
+  function httpsUpgradeUrl(u) {
+    var s = String(u || ''), m = /^http:\/\/([^\/:?#]+)(?::80)?(\/.*)?$/i.exec(s);
+    if (!m) return '';
+    return 'https://' + m[1] + (m[2] || '');
+  }
   function probeNoCorsAlive(url, cb) {
     if (typeof fetch !== 'function' || !/^https?:/i.test(String(url || ''))) { cb(false); return; }
     var done = false, tm = setTimeout(function () { if (!done) { done = true; cb(false); } }, 4500);
@@ -4271,8 +4299,8 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
     if (!rt) return false;
     return rt.indexOf('#EXTM3U') > -1 || rt.indexOf('#EXTINF') > -1 || rt.indexOf('#EXT-X-') > -1;
   }
-  function probeM3uUrl(url, pid, t0, doneCb) {
-    var x = new XMLHttpRequest(), finished = false;
+  function probeM3uUrl(url, pid, t0, doneCb, triedHttps) {
+    var x = new XMLHttpRequest(), finished = false, reqUrl = proxifyUrl(url);
     function fin(ok, msg, hard) {
       if (finished) return;
       finished = true;
@@ -4282,7 +4310,7 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
     }
     if (!url) { fin(false, 'Adres boş', true); return; }
     if (String(url).indexOf('local://') === 0) { fin(true, 'YEREL DOSYA', false); return; }
-    try { x.open('GET', url, true); } catch (e) { fin(false, 'Geçersiz adres', true); return; }
+    try { x.open('GET', reqUrl, true); } catch (e) { fin(false, 'Geçersiz adres', true); return; }
     x.timeout = 22000;
     x.onreadystatechange = function () {
       if (finished) return;
@@ -4307,11 +4335,19 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
     };
     x.onerror = function () {
       if (finished) return;
-      if (isMixedHttpOnHttps(url)) {
+      if (!triedHttps && !(S.cfg && S.cfg.proxy) && isMixedHttpOnHttps(reqUrl)) {
+        var upg = httpsUpgradeUrl(url);
+        if (upg) {
+          finished = true;
+          probeM3uUrl(upg, pid, t0, doneCb, true);
+          return;
+        }
+      }
+      if (isMixedHttpOnHttps(reqUrl)) {
         fin(false, 'HTTPS\u2192HTTP Engelli', true);
         return;
       }
-      probeNoCorsAlive(url, function (alive) {
+      probeNoCorsAlive(reqUrl, function (alive) {
         if (finished) return;
         if (alive) {
           if (pid === S.act && (isPlaybackActive() || S.channels.length > 0)) {
@@ -4957,14 +4993,25 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
     try { return { host: m[1], user: decodeURIComponent(u[1]), pass: decodeURIComponent(w[1]), alt: String(p.host2 || '').replace(/\/+$/, '') }; } catch (e) { return null; }
   }
   function xtGet(c, action, extra, cb, tmo) {
-    var done = false, second = false;
+    var done = false, second = false, triedHttps = false;
     function fin(err, j) { if (done) return; done = true; cb(err, j); }
     function attempt(host) {
       var x = new XMLHttpRequest(), ended = false;
+      var rawApi = host + '/player_api.php?username=' + encodeURIComponent(c.user) + '&password=' + encodeURIComponent(c.pass) +
+        (action ? '&action=' + action : '') + (extra || '');
+      var reqApi = proxifyUrl(rawApi);
       function bad(code) {
         var toAlt = (host === c.host);
         if (ended) return;
         ended = true;
+        if (!triedHttps && !(S.cfg && S.cfg.proxy) && isMixedHttpOnHttps(reqApi)) {
+          var upgHost = httpsUpgradeUrl(host);
+          if (upgHost) {
+            triedHttps = true;
+            attempt(upgHost);
+            return;
+          }
+        }
         if (!second && c.alt && c.alt !== c.host) {
           second = true;
           c.altUntil = toAlt ? new Date().getTime() + 600000 : 0;
@@ -4975,8 +5022,7 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
         fin(code);
       }
       try {
-        x.open('GET', host + '/player_api.php?username=' + encodeURIComponent(c.user) + '&password=' + encodeURIComponent(c.pass) +
-          (action ? '&action=' + action : '') + (extra || ''), true);
+        x.open('GET', reqApi, true);
       } catch (e) { bad(1); return; }
       x.timeout = tmo || 60000;
       x.onload = function () {
@@ -5288,19 +5334,29 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
     toast('Liste güncellendi', 1500);
   }
 
-  function loadPlaylist(url, auto, bg) {
+  function loadPlaylist(url, auto, bg, triedHttps) {
     if (!bg) showBuffer(true, 'Liste indiriliyor...');
-    var x = new XMLHttpRequest(), done = false, pid = S.act, tReq = now();
+    var x = new XMLHttpRequest(), done = false, pid = S.act, tReq = now(), reqUrl = proxifyUrl(url);
     function fail() {
       if (done) return;
+      if (!triedHttps && !(S.cfg && S.cfg.proxy) && isMixedHttpOnHttps(reqUrl)) {
+        var upg = httpsUpgradeUrl(url);
+        if (upg) {
+          done = true;
+          log('retry', 'HTTPS sayfada HTTP M3U → HTTPS yükseltme deneniyor');
+          loadPlaylist(upg, auto, bg, true);
+          return;
+        }
+      }
       done = true;
-      S.pStat[pid] = { st: 'bad', msg: x.status ? ('Hata ' + x.status) : 'Bağlantı yok', ms: 0, at: now() };
+      var mixedErr = isMixedHttpOnHttps(reqUrl);
+      S.pStat[pid] = { st: 'bad', msg: mixedErr ? 'HTTPS\u2192HTTP Engelli' : (x.status ? ('Hata ' + x.status) : 'Bağlantı yok'), ms: 0, at: now(), hard: mixedErr };
       savePStat();
       updatePlSummary();
-      log('err', 'liste indirilemedi (' + (x.status || 'bağlantı yok') + ')');
-      if (window.location.protocol === 'https:' && /^http:\/\//i.test(String(url || ''))) {
-        log('err', 'HTTPS sayfada (GitHub Pages vb.) HTTP:// kaynak tarayıcı güvenlik politikasıyla engellenebilir');
-        toast('HTTPS sayfada HTTP:// kaynak engellendi. HTTPS adresi girin veya Cihazdan M3U Dosyası yükleyin.', 4800);
+      log('err', 'liste indirilemedi (' + (mixedErr ? 'HTTPS->HTTP tarayıcı engeli' : (x.status || 'bağlantı yok')) + ')');
+      if (mixedErr) {
+        log('err', 'Çözüm: Ayarlar > HTTPS Proxy girin, HTTPS kaynak kullanın veya Cihazdan M3U yükleyin');
+        toast('Android/Chrome HTTPS sayfada http:// engelliyor! Çözüm: Ayarlar → HTTPS Proxy girin veya Cihazdan .m3u dosyası yükleyin.', 6000);
       }
       if (bg) return;
       if (pid === S.act && S.cfg.autoFailover && S.panels.length > 1) {
@@ -5309,15 +5365,15 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
       }
       getCache(pid, function (c) {
         if (c) { toast('Liste indirilemedi, kayıtlı liste kullanılıyor'); parseM3U(c, auto); }
-        else { showBuffer(false); if (!(window.location.protocol === 'https:' && /^http:\/\//i.test(String(url || '')))) toast('Liste indirilemedi. Adresi kontrol edin.'); openPlist(); }
+        else { showBuffer(false); if (!mixedErr) toast('Liste indirilemedi. Adresi kontrol edin.'); openPlist(); }
       });
     }
-    try { x.open('GET', url, true); } catch (e) { fail(); return; }
+    try { x.open('GET', reqUrl, true); } catch (e) { fail(); return; }
     x.timeout = 90000;
     x.onload = function () {
       if (done) return;
       var t = x.responseText || '';
-      if ((x.status === 200 || x.status === 0) && (t.indexOf('#EXTINF') > -1 || t.indexOf('#EXTM3U') > -1)) {
+      if ((x.status === 200 || x.status === 0) && isM3uText(t)) {
         done = true;
         S.pFail[pid] = 0;
         S.pStat[pid] = { st: 'ok', msg: 'ÇALIŞIYOR', ms: Math.max(1, now() - tReq), at: now() };
@@ -7165,6 +7221,7 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
       { id: 'refh', name: 'Liste yenileme sıklığı (arka plan, yayın yokken)', val: S.cfg.refH + ' saat' },
       { id: 'pin', name: S.cfg.pin ? 'Ebeveyn PIN\'ini değiştir' : 'Ebeveyn kilidi PIN\'i belirle (kategori kilitleme için)', val: 'OK' },
       { id: 'pinoff', name: 'Ebeveyn PIN\'ini kaldır', val: S.cfg.pin ? 'OK' : '-' },
+      { id: 'proxy', name: 'HTTPS Proxy / Köprü (GitHub HTTPS → HTTP:// paneller için)', val: S.cfg.proxy ? S.cfg.proxy : 'Kapalı' },
       { id: 'refresh', name: 'Listeyi şimdi yenile', val: 'OK' },
       { id: 'pcheck', name: 'Tüm panelleri kontrol et (Yeşil / Kırmızı bayrak taraması)', val: 'OK' },
       { id: 'keytest', name: 'Tuş testi (GERİ tuşu kodunu bul)', val: 'OK' },
@@ -7253,6 +7310,15 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
       rebuildGroups(curGroupName(), true);
       cfgList.set(cfgItems(), cfgList.sel);
       toast('Gizlenen kanallar geri getirildi', 1800);
+      return;
+    }
+    if (it.id === 'proxy') {
+      askText('HTTPS PROXY KÖPRÜSÜ', 'Worker/Proxy URL (örn: https://...workers.dev/?url= — kapatmak için boş bırakın)', function (v) {
+        S.cfg.proxy = trim(String(v || ''));
+        saveCfg();
+        cfgList.set(cfgItems(), cfgList.sel);
+        toast(S.cfg.proxy ? 'HTTPS Proxy kaydedildi; listeler bu köprüden çekilecek' : 'HTTPS Proxy kapatıldı', 2600);
+      }, { maxLen: 240, allowEmpty: true, val: S.cfg.proxy || '' });
       return;
     }
     if (it.id === 'refresh') {
@@ -8127,8 +8193,12 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
       if (!m) return '';
       try { return decodeURIComponent(m[1].replace(/\+/g, ' ')); } catch (e) { return m[1]; }
     }
-    var qXl = queryParam('xl'), qDemo = queryParam('demo'), qM3u = queryParam('m3u');
+    var qXl = queryParam('xl'), qDemo = queryParam('demo'), qM3u = queryParam('m3u'), qProxy = queryParam('proxy');
     if (qXl === '1') setXlMode(1, true);
+    if (qProxy) {
+      if (qProxy === 'off' || qProxy === '0') { S.cfg.proxy = ''; saveCfg(); }
+      else if (/^https?:\/\//i.test(qProxy)) { S.cfg.proxy = trim(qProxy); saveCfg(); }
+    }
     if (qM3u && /^https?:\/\//i.test(qM3u)) {
       var qId = 'p_url_' + sig(qM3u).replace(/[^a-z0-9]/gi, ''), qFound = getPanel(qId);
       if (!qFound) {
