@@ -4245,6 +4245,32 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
     if (S.started || S.everPlayed || S.retrying) return true;
     try { return !video.paused && video.readyState >= 2; } catch (e) { return false; }
   }
+  function isMixedHttpOnHttps(url) {
+    return window.location.protocol === 'https:' && /^http:\/\//i.test(String(url || ''));
+  }
+  function probeNoCorsAlive(url, cb) {
+    if (typeof fetch !== 'function' || !/^https?:/i.test(String(url || ''))) { cb(false); return; }
+    var done = false, tm = setTimeout(function () { if (!done) { done = true; cb(false); } }, 4500);
+    try {
+      fetch(url, { mode: 'no-cors', cache: 'no-store' }).then(function () {
+        if (done) return;
+        done = true;
+        clearTimeout(tm);
+        cb(true);
+      }, function () {
+        if (done) return;
+        done = true;
+        clearTimeout(tm);
+        cb(false);
+      });
+    } catch (ef) {
+      if (!done) { done = true; clearTimeout(tm); cb(false); }
+    }
+  }
+  function isM3uText(rt) {
+    if (!rt) return false;
+    return rt.indexOf('#EXTM3U') > -1 || rt.indexOf('#EXTINF') > -1 || rt.indexOf('#EXT-X-') > -1;
+  }
   function probeM3uUrl(url, pid, t0, doneCb) {
     var x = new XMLHttpRequest(), finished = false;
     function fin(ok, msg, hard) {
@@ -4255,14 +4281,15 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
       doneCb(ok, !!hard);
     }
     if (!url) { fin(false, 'Adres boş', true); return; }
+    if (String(url).indexOf('local://') === 0) { fin(true, 'YEREL DOSYA', false); return; }
     try { x.open('GET', url, true); } catch (e) { fin(false, 'Geçersiz adres', true); return; }
-    x.timeout = 10000;
+    x.timeout = 22000;
     x.onreadystatechange = function () {
       if (finished) return;
       if (x.readyState === 3 || x.readyState === 4) {
         var rt = '';
         try { rt = x.responseText || ''; } catch (e2) {}
-        if ((x.status === 200 || (x.status === 0 && rt.length > 0)) && (rt.indexOf('#EXTM3U') > -1 || rt.indexOf('#EXTINF') > -1)) {
+        if ((x.status === 200 || (x.status === 0 && rt.length > 0)) && isM3uText(rt)) {
           fin(true, 'ÇALIŞIYOR', false);
           if (x.readyState === 3) { try { x.abort(); } catch (e3) {} }
         }
@@ -4270,20 +4297,44 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
     };
     x.onload = function () {
       if (finished) return;
-      var rt = x.responseText || '';
-      if ((x.status === 200 || x.status === 0) && (rt.indexOf('#EXTM3U') > -1 || rt.indexOf('#EXTINF') > -1)) {
+      var rt = '';
+      try { rt = x.responseText || ''; } catch (e2) {}
+      if ((x.status === 200 || x.status === 0) && isM3uText(rt)) {
         fin(true, 'ÇALIŞIYOR', false);
       } else {
         fin(false, x.status ? ('Hata ' + x.status) : 'Liste geçersiz', x.status === 401 || x.status === 403 || x.status === 404);
       }
     };
-    x.onerror = function () { fin(false, 'Bağlantı yok', false); };
+    x.onerror = function () {
+      if (finished) return;
+      if (isMixedHttpOnHttps(url)) {
+        fin(false, 'HTTPS\u2192HTTP Engelli', true);
+        return;
+      }
+      probeNoCorsAlive(url, function (alive) {
+        if (finished) return;
+        if (alive) {
+          if (pid === S.act && (isPlaybackActive() || S.channels.length > 0)) {
+            fin(true, 'ÇALIŞIYOR (Aktif)', false);
+          } else {
+            fin(false, 'CORS Engeli (Sunucu Açık)', false);
+          }
+        } else {
+          fin(false, 'Bağlantı yok', false);
+        }
+      });
+    };
     x.ontimeout = function () { fin(false, 'Zaman aşımı', false); };
     try { x.send(); } catch (e4) { fin(false, 'Ağ hatası', false); }
   }
   function runPanelProbe(p, doneCb) {
     if (!p || !getPanel(p.id)) { doneCb(false, true); return; }
     var pid = p.id, t0 = now(), u = String(p.url || ''), h = String(p.host || '');
+    if (u.indexOf('local://') === 0) {
+      S.pStat[pid] = { st: 'ok', msg: 'YEREL DOSYA', ms: 1, at: now(), hard: false };
+      doneCb(true, false);
+      return;
+    }
     if (u.indexOf('studio.local/demo.m3u') > -1 || h.indexOf('studio.local') > -1) {
       setTimeout(function () {
         if (!getPanel(pid)) { doneCb(false, true); return; }
@@ -4312,10 +4363,21 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
             S.pStat[pid] = { st: 'ok', msg: 'ÇALIŞIYOR', ms: Math.max(1, now() - t0), at: now() };
             doneCb(true, false);
           }
+        } else if (!err && j && j.server_info) {
+          S.pStat[pid] = { st: 'ok', msg: 'ÇALIŞIYOR', ms: Math.max(1, now() - t0), at: now() };
+          doneCb(true, false);
         } else {
-          probeM3uUrl(panelUrl(p), pid, t0, doneCb);
+          xtGet(xc, 'get_live_categories', '', function (err2, lc) {
+            if (!getPanel(pid)) { doneCb(false, true); return; }
+            if (!err2 && lc instanceof Array) {
+              S.pStat[pid] = { st: 'ok', msg: 'ÇALIŞIYOR', ms: Math.max(1, now() - t0), at: now() };
+              doneCb(true, false);
+            } else {
+              probeM3uUrl(panelUrl(p), pid, t0, doneCb);
+            }
+          }, 15000);
         }
-      }, 10000);
+      }, 18000);
     } else {
       probeM3uUrl(panelUrl(p), pid, t0, doneCb);
     }
@@ -4323,6 +4385,12 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
   function checkOnePanel(p, doneCb, manual, prevSt) {
     if (!p || !getPanel(p.id)) { doneCb(false); return; }
     var pid = p.id, t0 = now();
+    if (!manual && pid === S.act && prevSt && prevSt.st === 'ok' && (t0 - (prevSt.at || 0)) < 25000 && (S.channels.length > 0 || isPlaybackActive())) {
+      S.pStat[pid] = prevSt;
+      updatePlSummary();
+      doneCb(true);
+      return;
+    }
     S.pStat[pid] = { st: 'chk', msg: 'Kontrol ediliyor...', ms: 0, at: t0 };
     updatePlSummary();
     runPanelProbe(p, function (ok, hard) {
@@ -4333,24 +4401,34 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
         return;
       }
       S.pFail[pid] = (S.pFail[pid] || 0) + 1;
-      if (!hard && pid === S.act && !manual && S.pFail[pid] < 2) {
-        log('list', 'aktif panel ilk kontrolde yanıt vermedi (' + (S.pStat[pid] ? S.pStat[pid].msg : 'hata') + '), 2. doğrulama yapılıyor');
+      if (!hard && ((pid === S.act && S.pFail[pid] < 2) || (manual && IS_TOUCH))) {
+        log('list', 'panel ilk kontrolde yanıt vermedi (' + (S.pStat[pid] ? S.pStat[pid].msg : 'hata') + '), 2. doğrulama yapılıyor');
         setTimeout(function () {
           if (!getPanel(pid)) { doneCb(false); return; }
-          runPanelProbe(p, function (ok2) {
+          runPanelProbe(p, function (ok2, hard2) {
             if (!getPanel(pid)) { doneCb(false); return; }
             if (ok2) {
               S.pFail[pid] = 0;
               doneCb(true);
             } else {
               S.pFail[pid] = (S.pFail[pid] || 0) + 1;
-              if (S.pFail[pid] < 2 && prevSt && prevSt.st === 'ok') {
+              if (!hard2 && pid === S.act && (isPlaybackActive() || S.channels.length > 0)) {
+                S.pStat[pid] = { st: 'ok', msg: 'ÇALIŞIYOR (Aktif)', ms: prevSt ? (prevSt.ms || 1) : 1, at: now() };
+                doneCb(true);
+                return;
+              }
+              if (!hard2 && S.pFail[pid] < 2 && prevSt && prevSt.st === 'ok') {
                 S.pStat[pid] = prevSt;
               }
               doneCb(false);
             }
           });
-        }, 1500);
+        }, 1200);
+        return;
+      }
+      if (!hard && pid === S.act && (isPlaybackActive() || S.channels.length > 0)) {
+        S.pStat[pid] = { st: 'ok', msg: 'ÇALIŞIYOR (Aktif)', ms: prevSt ? (prevSt.ms || 1) : 1, at: now() };
+        doneCb(true);
         return;
       }
       if (!manual && !hard && S.pFail[pid] < 2) {
@@ -4370,18 +4448,21 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
       if (manual) toast('Paneller şu anda taranıyor (' + S.pChkDone + '/' + S.pChkTotal + ')...', 1800);
       return;
     }
-    var list = S.panels.slice(), prevMap = {}, i;
+    var list = S.panels.slice(), prevMap = {}, i, tNow = now();
     S.pChecking = true;
     S.pChkDone = 0;
     S.pChkTotal = list.length;
     for (i = 0; i < list.length; i++) {
       prevMap[list[i].id] = S.pStat[list[i].id] || null;
-      S.pStat[list[i].id] = { st: 'chk', msg: 'Taranıyor...', ms: 0, at: now() };
+      if (!manual && list[i].id === S.act && prevMap[list[i].id] && prevMap[list[i].id].st === 'ok' && (tNow - (prevMap[list[i].id].at || 0)) < 25000) {
+        continue;
+      }
+      S.pStat[list[i].id] = { st: 'chk', msg: 'Taranıyor...', ms: 0, at: tNow };
     }
     updatePlSummary();
     if (manual) toast('\u2691 Paneller kontrol ediliyor (' + list.length + ' panel)...', 2200);
     log('list', 'panel kontrolü başlatıldı (' + list.length + ' panel)');
-    var idx = 0, activeWorkers = 0, maxWorkers = 2;
+    var idx = 0, activeWorkers = 0, maxWorkers = IS_TOUCH ? 1 : 2;
     function next() {
       if (S.pChkDone >= S.pChkTotal) {
         S.pChecking = false;
@@ -8066,7 +8147,7 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
       else legacyStart(p);
     } else { openEditor(null); toast('Başlamak için ilk panelinizi ekleyin'); }
     if (S.panels.length) {
-      setTimeout(function () { checkAllPanels(false); }, 600);
+      setTimeout(function () { checkAllPanels(false); }, 3500);
     }
     function probeWebOSNet() {
       var netDesc = (navigator.onLine === false) ? 'Çevrimdışı' : 'Çevrimiçi';
