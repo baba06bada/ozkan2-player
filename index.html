@@ -1192,11 +1192,12 @@ body.lst #toast {
   border-color: #050811;
   color: #f59e0b;
 }
-#pbAdd   { left: 340px;  width: 236px; border-color: #10b981; color: #34d399; }
-#pbCheck { left: 591px;  width: 236px; background: #0c2b47; border-color: #38bdf8; color: #7dd3fc; }
-#pbEdit  { left: 842px;  width: 236px; border-color: #f59e0b; color: #f59e0b; }
-#pbDel   { left: 1093px; width: 236px; border-color: #ef4444; color: #f87171; }
-#pbClose { left: 1344px; width: 236px; }
+#pbAdd   { left: 340px;  width: 196px; border-color: #10b981; color: #34d399; }
+#pbCheck { left: 548px;  width: 204px; background: #0c2b47; border-color: #38bdf8; color: #7dd3fc; }
+#pbProxy { left: 764px;  width: 198px; background: #1e1605; border-color: #f59e0b; color: #fcd34d; }
+#pbEdit  { left: 974px;  width: 194px; border-color: #f59e0b; color: #f59e0b; }
+#pbDel   { left: 1180px; width: 194px; border-color: #ef4444; color: #f87171; }
+#pbClose { left: 1386px; width: 194px; }
 .pbtn.plfoc {
   background: #f59e0b !important;
   color: #000000 !important;
@@ -2940,11 +2941,12 @@ body.mob #plList .row .st { width: 104px; font-size: 11px; }
 body.mob .pfi { left: 6px; top: 8px; width: 28px; height: 26px; line-height: 24px; font-size: 13px; }
 body.mob .pflag { height: 24px; line-height: 22px; padding: 0 5px; font-size: 10px; }
 body.mob .pact { display: none; }
-body.mob #pbAdd   { left: 2%;    width: 18%; }
-body.mob #pbCheck { left: 21.5%; width: 22%; }
-body.mob #pbEdit  { left: 45%;   width: 18%; }
-body.mob #pbDel   { left: 64.5%; width: 15%; }
-body.mob #pbClose { left: 81%;   width: 17%; }
+body.mob #pbAdd   { left: 2%;    width: 15%; }
+body.mob #pbCheck { left: 18%;   width: 17%; }
+body.mob #pbProxy { left: 36%;   width: 17%; }
+body.mob #pbEdit  { left: 54%;   width: 15%; }
+body.mob #pbDel   { left: 70%;   width: 13%; }
+body.mob #pbClose { left: 84%;   width: 14%; }
 body.mob #plHint, body.mob #cfgHint, body.mob #optHint, body.mob #gdHint, body.mob #pinHint,
 body.mob #diagHint, body.mob #rpHint, body.mob #ktHint {
   display: none;
@@ -3177,7 +3179,8 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
   <div class="sTitle">PANELLER <span id="plSum"></span></div>
   <div id="plList" class="vlist"></div>
   <div class="pbtn plb" id="pbAdd">+ YENİ PANEL</div>
-  <div class="pbtn plb" id="pbCheck">&#9873; PANEL KONTROL</div>
+  <div class="pbtn plb" id="pbCheck">&#9873; KONTROL</div>
+  <div class="pbtn plb" id="pbProxy">&#128279; PROXY</div>
   <div class="pbtn plb" id="pbEdit">DÜZENLE</div>
   <div class="pbtn plb" id="pbDel">SİL</div>
   <div class="pbtn plb" id="pbClose">KAPAT</div>
@@ -3205,7 +3208,7 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
 
 <div id="ask">
   <div class="sTitle" id="askTitle"></div>
-  <div class="fld" id="af0"><label id="askLbl"></label><input id="inAsk" type="text" maxlength="30"></div>
+  <div class="fld" id="af0"><label id="askLbl"></label><input id="inAsk" type="text" maxlength="240"></div>
   <div class="btn" id="af1">KAYDET</div>
   <div class="btn" id="af2">İPTAL</div>
 </div>
@@ -3516,6 +3519,14 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
                   sUrl = upg;
                   log('retry', 'HTTPS sayfada HTTP akış → HTTPS deneniyor');
                   try { hls.loadSource(upg); return; } catch (ehs) {}
+                }
+                if (S.cfg && S.cfg.proxy) {
+                  var pxStream = proxifyUrl(rawUrl);
+                  if (pxStream && pxStream !== sUrl) {
+                    sUrl = pxStream;
+                    log('retry', 'hls.js ağ/CORS hatası → HTTPS Proxy üzerinden deneniyor');
+                    try { hls.loadSource(pxStream); return; } catch (epx) {}
+                  }
                 }
                 var canNat = false;
                 try { canNat = !!(video.canPlayType && video.canPlayType('application/vnd.apple.mpegurl')); } catch (ec) {}
@@ -3829,7 +3840,7 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
       if (c.autoNext !== undefined) S.cfg.autoNext = c.autoNext ? 1 : 0;
       if (c.epgOff !== undefined) S.cfg.epgOff = parseInt(c.epgOff, 10) || 0;
       if (c.subStyle !== undefined) S.cfg.subStyle = parseInt(c.subStyle, 10) || 0;
-      if (c.proxy !== undefined) S.cfg.proxy = trim(String(c.proxy || ''));
+      if (c.proxy !== undefined) S.cfg.proxy = normalizeProxyUrl(c.proxy);
       if (c.xlUserSet && c.xl !== undefined) S.cfg.xl = c.xl ? 1 : 0;
       else if (document.body && document.body.className && document.body.className.indexOf('xl') > -1) S.cfg.xl = 1;
       else if (c.xl !== undefined) S.cfg.xl = c.xl ? 1 : 0;
@@ -4241,16 +4252,20 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
       else if (st === 'chk') chkN++;
     }
     if (sumEl) {
+      var pxBadge = (S.cfg && S.cfg.proxy) ? ' &nbsp;&bull;&nbsp; <span class="y">&#128279; Proxy Açık</span>' : '';
       if (S.pChecking || chkN > 0) {
-        sumEl.innerHTML = '<span class="b">&#8987; Taranıyor (' + S.pChkDone + '/' + S.pChkTotal + ')</span>';
+        sumEl.innerHTML = '<span class="b">&#8987; Taranıyor (' + S.pChkDone + '/' + S.pChkTotal + ')</span>' + pxBadge;
       } else if (S.panels.length) {
-        sumEl.innerHTML = '<span class="g">&#9873; ' + okN + ' Çalışıyor</span> &nbsp;&bull;&nbsp; <span class="r">&#9873; ' + badN + ' Çalışmıyor</span>';
+        sumEl.innerHTML = '<span class="g">&#9873; ' + okN + ' Çalışıyor</span> &nbsp;&bull;&nbsp; <span class="r">&#9873; ' + badN + ' Çalışmıyor</span>' + pxBadge;
       } else {
-        sumEl.innerHTML = '';
+        sumEl.innerHTML = pxBadge ? '<span class="y">&#128279; Proxy Açık</span>' : '';
       }
     }
     if (chkBtn) {
-      chkBtn.innerHTML = S.pChecking ? ('&#8987; TARANIYOR (' + S.pChkDone + '/' + S.pChkTotal + ')') : '&#9873; PANEL KONTROL';
+      chkBtn.innerHTML = S.pChecking ? ('&#8987; TARANIYOR (' + S.pChkDone + '/' + S.pChkTotal + ')') : '&#9873; KONTROL';
+    }
+    if ($('pbProxy')) {
+      $('pbProxy').innerHTML = (S.cfg && S.cfg.proxy) ? '&#128279; PROXY: AÇIK' : '&#128279; PROXY';
     }
     if (plList && S.mode === 'plist') plList.render();
     updateHealthMonitor();
@@ -4263,8 +4278,36 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
   function isMixedHttpOnHttps(url) {
     return window.location.protocol === 'https:' && /^http:\/\//i.test(String(url || ''));
   }
+  function normalizeProxyUrl(raw) {
+    var px = trim(String(raw || ''));
+    if (!px) return '';
+    var split = /^(https?:\/\/[^?#]+\?(?:[^#]*&)?url=)(?:https?(?::\/\/|%3A%2F%2F).*)$/i.exec(px);
+    if (split) return split[1];
+    if (/^https?:\/\/[^\/?#]+\/?$/i.test(px) && px.indexOf('{url}') < 0) {
+      return px.replace(/\/+$/, '') + '/?url=';
+    }
+    return px;
+  }
+  function unwrapProxyTarget(raw) {
+    var s = trim(String(raw || ''));
+    var m = /^(https?:\/\/[^?#]+\?(?:[^#]*&)?url=)(.+)$/i.exec(s);
+    if (!m) return null;
+    var tail = trim(m[2]);
+    if (/^https?%3A%2F%2F/i.test(tail)) {
+      try { tail = decodeURIComponent(tail); } catch (ed) {}
+    }
+    if (!/^https?:\/\//i.test(tail)) return null;
+    return { proxy: m[1], target: tail };
+  }
+  function cfErrLabel(status, body) {
+    var b = String(body || '');
+    if (b.indexOf('error code: 1003') > -1) return 'Worker IP Engeli (Domain Gerekli)';
+    if (b.indexOf('error code: 1016') > -1 || status === 530) return 'Alan Adı Bulunamadı (DNS 530)';
+    if (status === 521 || status === 522 || status === 523 || status === 524) return 'Sunucu Zaman Aşımı (' + status + ')';
+    return '';
+  }
   function proxifyUrl(u) {
-    var px = (S.cfg && S.cfg.proxy) ? trim(String(S.cfg.proxy)) : '', s = String(u || '');
+    var px = (S.cfg && S.cfg.proxy) ? normalizeProxyUrl(S.cfg.proxy) : '', s = String(u || '');
     if (!px || !/^https?:\/\//i.test(s)) return s;
     if (s.indexOf(px) === 0) return s;
     if (px.indexOf('{url}') > -1) return px.replace('{url}', encodeURIComponent(s));
@@ -4330,7 +4373,8 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
       if ((x.status === 200 || x.status === 0) && isM3uText(rt)) {
         fin(true, 'ÇALIŞIYOR', false);
       } else {
-        fin(false, x.status ? ('Hata ' + x.status) : 'Liste geçersiz', x.status === 401 || x.status === 403 || x.status === 404);
+        var cfMsg = cfErrLabel(x.status, rt);
+        fin(false, cfMsg || (x.status ? ('Hata ' + x.status) : 'Liste geçersiz'), !!cfMsg || x.status === 401 || x.status === 403 || x.status === 404);
       }
     };
     x.onerror = function () {
@@ -4345,6 +4389,14 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
       }
       if (isMixedHttpOnHttps(reqUrl)) {
         fin(false, 'HTTPS\u2192HTTP Engelli', true);
+        return;
+      }
+      if (reqUrl !== url) {
+        if (pid === S.act && (isPlaybackActive() || S.channels.length > 0)) {
+          fin(true, 'ÇALIŞIYOR (Aktif)', false);
+        } else {
+          fin(false, 'Proxy / Sunucu Yanıt Vermedi', false);
+        }
         return;
       }
       probeNoCorsAlive(reqUrl, function (alive) {
@@ -4638,7 +4690,7 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
       if (el) el.className = SF_CLASS[i] + (i === S.sf ? ' foc' : '');
     }
   }
-  var PL_BTNS = ['pbAdd', 'pbCheck', 'pbEdit', 'pbDel', 'pbClose'];
+  var PL_BTNS = ['pbAdd', 'pbCheck', 'pbProxy', 'pbEdit', 'pbDel', 'pbClose'];
   function paintPlFocus() {
     var i, el, onBtns = (S.plFocus === 'btns');
     plList.active = !onBtns;
@@ -4652,9 +4704,10 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
   function runPlBtn(idx) {
     if (idx === 0) openEditor(null);
     else if (idx === 1) checkAllPanels(true);
-    else if (idx === 2) { if (plList.cur()) openEditor(plList.cur()); }
-    else if (idx === 3) deletePanel(plList.cur());
-    else if (idx === 4) { if (S.panels.length) leaveMenus(); else toast('En az bir panel ekleyin'); }
+    else if (idx === 2) promptProxySetup(true);
+    else if (idx === 3) { if (plList.cur()) openEditor(plList.cur()); }
+    else if (idx === 4) deletePanel(plList.cur());
+    else if (idx === 5) { if (S.panels.length) leaveMenus(); else toast('En az bir panel ekleyin'); }
   }
   function openPlist() {
     endMove(true);
@@ -4792,6 +4845,16 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
     var host = trim($('inHost').value).replace(/\/+$/, '');
     var user = trim($('inUser').value), pass = trim($('inPass').value);
     var host2 = trim($('inHost2').value).replace(/\/+$/, '');
+    var uw = url ? unwrapProxyTarget(url) : null;
+    if (uw) {
+      if (!S.cfg.proxy) { S.cfg.proxy = normalizeProxyUrl(uw.proxy); saveCfg(); }
+      url = uw.target;
+    }
+    var hw = host ? unwrapProxyTarget(host) : null;
+    if (hw) {
+      if (!S.cfg.proxy) { S.cfg.proxy = normalizeProxyUrl(hw.proxy); saveCfg(); }
+      host = hw.target.replace(/\/+$/, '');
+    }
     if (host && !/^https?:\/\//i.test(host)) host = 'http://' + host;
     if (host2 && !/^https?:\/\//i.test(host2)) host2 = 'http://' + host2;
     if (host2 === host) host2 = '';
@@ -4801,6 +4864,10 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
     if (S.editId) { p = getPanel(S.editId); delCache(p.id); }
     else { p = { id: 'p' + (new Date().getTime()) }; S.panels.push(p); }
     p.name = name; p.url = url; p.host = host; p.user = user; p.pass = pass; p.host2 = host2;
+    S.xtBad = '';
+    delete S.pStat[p.id];
+    S.pFail[p.id] = 0;
+    savePStat();
     S.editId = null;
     activatePanel(p.id);
   }
@@ -5350,13 +5417,18 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
       }
       done = true;
       var mixedErr = isMixedHttpOnHttps(reqUrl);
-      S.pStat[pid] = { st: 'bad', msg: mixedErr ? 'HTTPS\u2192HTTP Engelli' : (x.status ? ('Hata ' + x.status) : 'Bağlantı yok'), ms: 0, at: now(), hard: mixedErr };
+      var rtErr = '';
+      try { rtErr = x.responseText || ''; } catch (exr) {}
+      var cfMsg = cfErrLabel(x.status, rtErr);
+      S.pStat[pid] = { st: 'bad', msg: mixedErr ? 'HTTPS\u2192HTTP Engelli' : (cfMsg || (x.status ? ('Hata ' + x.status) : 'Bağlantı yok')), ms: 0, at: now(), hard: mixedErr || !!cfMsg };
       savePStat();
       updatePlSummary();
-      log('err', 'liste indirilemedi (' + (mixedErr ? 'HTTPS->HTTP tarayıcı engeli' : (x.status || 'bağlantı yok')) + ')');
+      log('err', 'liste indirilemedi (' + (mixedErr ? 'HTTPS->HTTP tarayıcı engeli' : (cfMsg || x.status || 'bağlantı yok')) + ')');
       if (mixedErr) {
-        log('err', 'Çözüm: Ayarlar > HTTPS Proxy girin, HTTPS kaynak kullanın veya Cihazdan M3U yükleyin');
-        toast('Android/Chrome HTTPS sayfada http:// engelliyor! Çözüm: Ayarlar → HTTPS Proxy girin veya Cihazdan .m3u dosyası yükleyin.', 6000);
+        log('err', 'Çözüm: PANELLER > PROXY girin, HTTPS kaynak kullanın veya Cihazdan M3U yükleyin');
+        toast('Android/Chrome HTTPS sayfada http:// engelliyor! PANELLER → PROXY butonuna Worker adresinizi girin.', 6000);
+      } else if (cfMsg) {
+        toast(cfMsg, 5500);
       }
       if (bg) return;
       if (pid === S.act && S.cfg.autoFailover && S.panels.length > 1) {
@@ -7285,6 +7357,30 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
     cfgList.set(cfgItems(), cfgList.sel);
     return true;
   }
+  function promptProxySetup(fromPlist) {
+    askText('HTTPS PROXY KÖPRÜSÜ', 'Worker/Proxy URL (örn: https://...workers.dev/?url= — kapatmak için boş bırakın)', function (v) {
+      S.cfg.proxy = normalizeProxyUrl(v);
+      saveCfg();
+      S.pStat = {};
+      S.pFail = {};
+      S.xtBad = '';
+      savePStat();
+      updatePlSummary();
+      if (!fromPlist && S.mode === 'cfg') cfgList.set(cfgItems(), cfgList.sel);
+      if (S.cfg.proxy) {
+        toast('HTTPS Proxy kaydedildi: ' + S.cfg.proxy, 2600);
+        if (fromPlist) {
+          if (S.panels.length === 1 && S.act && !S.channels.length) activatePanel(S.act);
+          else if (S.panels.length) checkAllPanels(true);
+        } else if (S.act && !S.channels.length) {
+          activatePanel(S.act);
+        }
+      } else {
+        toast('HTTPS Proxy kapatıldı', 2200);
+        if (fromPlist && S.panels.length) checkAllPanels(true);
+      }
+    }, { maxLen: 240, allowEmpty: true, val: S.cfg.proxy || '' });
+  }
   function cfgActivate(it) {
     if (!it) return;
     if (cfgChange(it, 1)) return;
@@ -7313,12 +7409,7 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
       return;
     }
     if (it.id === 'proxy') {
-      askText('HTTPS PROXY KÖPRÜSÜ', 'Worker/Proxy URL (örn: https://...workers.dev/?url= — kapatmak için boş bırakın)', function (v) {
-        S.cfg.proxy = trim(String(v || ''));
-        saveCfg();
-        cfgList.set(cfgItems(), cfgList.sel);
-        toast(S.cfg.proxy ? 'HTTPS Proxy kaydedildi; listeler bu köprüden çekilecek' : 'HTTPS Proxy kapatıldı', 2600);
-      }, { maxLen: 240, allowEmpty: true, val: S.cfg.proxy || '' });
+      promptProxySetup(false);
       return;
     }
     if (it.id === 'refresh') {
@@ -7816,9 +7907,10 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
 
     btn('pbAdd', function () { S.plFocus = 'btns'; S.plBtn = 0; paintPlFocus(); openEditor(null); });
     if ($('pbCheck')) btn('pbCheck', function () { S.plFocus = 'btns'; S.plBtn = 1; paintPlFocus(); checkAllPanels(true); });
-    btn('pbEdit', function () { S.plFocus = 'btns'; S.plBtn = 2; paintPlFocus(); if (plList.cur()) openEditor(plList.cur()); });
-    btn('pbDel', function () { S.plFocus = 'btns'; S.plBtn = 3; paintPlFocus(); deletePanel(plList.cur()); });
-    btn('pbClose', function () { S.plFocus = 'btns'; S.plBtn = 4; paintPlFocus(); if (S.panels.length) leaveMenus(); else toast('En az bir panel ekleyin'); });
+    if ($('pbProxy')) btn('pbProxy', function () { S.plFocus = 'btns'; S.plBtn = 2; paintPlFocus(); promptProxySetup(true); });
+    btn('pbEdit', function () { S.plFocus = 'btns'; S.plBtn = 3; paintPlFocus(); if (plList.cur()) openEditor(plList.cur()); });
+    btn('pbDel', function () { S.plFocus = 'btns'; S.plBtn = 4; paintPlFocus(); deletePanel(plList.cur()); });
+    btn('pbClose', function () { S.plFocus = 'btns'; S.plBtn = 5; paintPlFocus(); if (S.panels.length) leaveMenus(); else toast('En az bir panel ekleyin'); });
 
     var inIds = ['inName', 'inUrl', 'inHost', 'inUser', 'inPass', 'inHost2'];
     function fieldClick(n) {
@@ -8197,7 +8289,7 @@ body.mob #diagLog { top: 50%; height: 42%; overflow-y: auto; }
     if (qXl === '1') setXlMode(1, true);
     if (qProxy) {
       if (qProxy === 'off' || qProxy === '0') { S.cfg.proxy = ''; saveCfg(); }
-      else if (/^https?:\/\//i.test(qProxy)) { S.cfg.proxy = trim(qProxy); saveCfg(); }
+      else if (/^https?:\/\//i.test(qProxy)) { S.cfg.proxy = normalizeProxyUrl(qProxy); saveCfg(); }
     }
     if (qM3u && /^https?:\/\//i.test(qM3u)) {
       var qId = 'p_url_' + sig(qM3u).replace(/[^a-z0-9]/gi, ''), qFound = getPanel(qId);
