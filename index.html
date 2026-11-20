@@ -3456,6 +3456,7 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
   var EPG_OFF_OPT = [-3, -2, -1, 0, 1, 2, 3];
   var SPEED_OPT = [1, 1.25, 1.5, 2, 0.75];
   var SUB_STYLES = ['Varsayılan', 'XL Beyaz (Kutu)', 'XL Altın (Kutu)'];
+  var VLC_MODES = ['Akıllı (Açılmayanı Otomatik VLC)', 'Her Zaman VLC ile Aç', 'Manuel (Sadece VLC Butonu)'];
   var RELOCK_MS = 15 * 60 * 1000;
   var PROFILES = ['Maç (hızlı kurtarma)', 'Dengeli', 'Film (sabırlı)', 'Özel'];
   var PROF_PRESET = [[4, 10], [6, 15], [12, 30]];
@@ -3478,7 +3479,7 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
     mode: 'player', prevMode: 'player', focus: 'channels', barBtn: 1, barFrom: 'groups',
     started: false, stall: 0, lastT: -1, retry: 0, userPaused: false,
     num: '', asp: 0, sf: 0, exitArm: false,
-    cfg: { profile: 0, stall: 4, first: 10, bg: 1, upDir: -1, pin: '', refH: 6, logo: 1, match: 0, pre: 0, xl: 0, autoFailover: 1, autoNext: 1, epgOff: 0, subStyle: 0, proxy: '' },
+    cfg: { profile: 0, stall: 4, first: 10, bg: 1, upDir: -1, pin: '', refH: 6, logo: 1, match: 0, pre: 0, xl: 0, autoFailover: 1, autoNext: 1, epgOff: 0, subStyle: 0, proxy: '', vlcMode: 0 },
     log: [], logDirty: false,
     stats: { starts: 0, retries: 0, stalls: 0, stallMs: 0, ttfSum: 0, ttfN: 0 },
     t0: 0, frozenSince: 0, stallLogged: false, lastGood: 0, resumeAt: 0, retrying: false,
@@ -3493,7 +3494,7 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
     snap: {}, snapAct: '', snapObj: {}, vdet: {}, altUntil: 0, altOn: false, altFmt: false, lastStallAt: 0, mStall0: 0, mT0: 0,
     unl: false, glock: {}, lkAct: '', lk: {}, lkN: 0, pin: null, ask: null, af: 0, gBase: 3, ownC: null, ownAct: '', arm: '',
     sleepM: 0, sleepAt: 0, sleepWarn: false, hkeys: null, hkAct: '',
-    mob: false, autoMuted: false, stageScale: 1, engineMode: 'Yerel <video>'
+    mob: false, autoMuted: false, stageScale: 1, engineMode: 'Yerel <video>', vlcAutoTried: false, vlcLaunchedAt: 0
   };
   var video, grList, chList, plList, cfgList, optList, gdList;
   var T = {};
@@ -3503,6 +3504,7 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
   var IS_TOUCH = ('ontouchstart' in window) || ((navigator && navigator.maxTouchPoints) > 0);
   var IS_IOS = /iPhone|iPad|iPod/i.test(UA) || (/Macintosh/i.test(UA) && IS_TOUCH);
   var IS_HTTP_TV = /^https?:$/i.test(window.location.protocol);
+  var FROM_VLC = /[?&]fromVlc=1(&|$)/.test(String(window.location.search || ''));
   var CAN_HLSJS_ENV = (typeof Promise !== 'undefined' && typeof Symbol !== 'undefined' && !!(window.MediaSource || window.WebKitMediaSource));
   var HLS_CDN_URL = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.8/dist/hls.min.js';
   var _ozHlsLoading = false, _ozHlsQueue = [], _ozPlayToken = 0;
@@ -3535,9 +3537,17 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
     if (S.altOn && S.playing && ch === S.playing) u = altUrl(u);
     return u;
   }
+  function vlcReturnUrl() {
+    if (!IS_HTTP_TV) return '';
+    var base = String(window.location.href || '').split('#')[0];
+    base = base.replace(/([?&])fromVlc=1(&?)/g, function (_m, p1, p2) { return p2 ? p1 : ''; }).replace(/[?&]$/, '');
+    return base + (base.indexOf('?') > -1 ? '&' : '?') + 'fromVlc=1';
+  }
   function vlcDeepLink(u) {
     if (!u || !/^https?:\/\//i.test(String(u))) return '#';
-    return 'vlc-x-callback://x-callback-url/stream?url=' + encodeURIComponent(String(u));
+    var ret = vlcReturnUrl();
+    return 'vlc-x-callback://x-callback-url/stream?url=' + encodeURIComponent(String(u)) +
+      (ret ? '&x-success=' + encodeURIComponent(ret) + '&x-error=' + encodeURIComponent(ret) + '&x-source=OZKAN%20PLAYER' : '');
   }
   function toBrowserLiveUrl(u, ch) {
     var s = String(u || '');
@@ -3574,6 +3584,7 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
       toast('VLC için geçerli yayın adresi yok', 1800);
       return;
     }
+    S.vlcLaunchedAt = now();
     try { video.pause(); } catch (ep) {}
     S.userPaused = true;
     window.location.href = vlcDeepLink(raw);
@@ -4166,6 +4177,10 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
       if (c.epgOff !== undefined) S.cfg.epgOff = parseInt(c.epgOff, 10) || 0;
       if (c.subStyle !== undefined) S.cfg.subStyle = parseInt(c.subStyle, 10) || 0;
       if (c.proxy !== undefined) S.cfg.proxy = normalizeProxyUrl(c.proxy);
+      if (c.vlcMode !== undefined) {
+        var vm0 = parseInt(c.vlcMode, 10) || 0;
+        S.cfg.vlcMode = (vm0 >= 0 && vm0 < VLC_MODES.length) ? vm0 : 0;
+      }
       if (c.xlUserSet && c.xl !== undefined) S.cfg.xl = c.xl ? 1 : 0;
       else if (document.body && document.body.className && document.body.className.indexOf('xl') > -1) S.cfg.xl = 1;
       else if (c.xl !== undefined) S.cfg.xl = c.xl ? 1 : 0;
@@ -5532,8 +5547,8 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
         pn = getPanel(S.act);
         toast((pn ? pn.name + ': ' : '') + ls.length + ' canlı kanal yüklendi', 2000);
         if (isMenu(S.mode)) leaveMenus();
-        if (pick) { S.zapList = ty0.chs; S.zapPos = pick.i - 1; play(pick); }
-        else openList();
+        if (pick && !(IS_IOS && (FROM_VLC || (S.cfg && S.cfg.vlcMode === 1)))) { S.zapList = ty0.chs; S.zapPos = pick.i - 1; play(pick, true); }
+        else { FROM_VLC = false; openList(); }
       }
       xtGet(c, 'get_live_categories', '', function (e1, lc) {
         if (failed) return;
@@ -5727,8 +5742,8 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
       var pn = getPanel(S.act);
       toast((pn ? pn.name + ': ' : '') + chs.length + ' içerik yüklendi', 2000);
       if (isMenu(S.mode)) leaveMenus();
-      if (pick) { S.zapList = S.T[pick.t].chs; S.zapPos = pick.i - 1; play(pick); }
-      else if (!auto) openList();
+      if (pick && !(IS_IOS && (FROM_VLC || (S.cfg && S.cfg.vlcMode === 1)))) { S.zapList = S.T[pick.t].chs; S.zapPos = pick.i - 1; play(pick, true); }
+      else { FROM_VLC = false; if (!auto || (IS_IOS && S.cfg && S.cfg.vlcMode === 1) || !S.playing) openList(); }
     }
     step();
   }
@@ -6812,7 +6827,7 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
     play(pc);
     toast('Önceki kanal: ' + pc.n + ' (Son 5 için tekrar 0)', 1800);
   }
-  function play(ch) {
+  function play(ch, fromAuto) {
     if (!ch) return;
     closeZapBar();
     S.crossMatch = null;
@@ -6821,7 +6836,7 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
     closeOpenStall('kanal değişti');
     hideVc();
     hideNextEp();
-    S.seekT = null; S.everPlayed = false;
+    S.seekT = null; S.everPlayed = false; S.vlcAutoTried = false;
     clearTimeout(T.autoNext); T.autoNext = 0;
     clearTimeout(T.iosVid);
     S.playing = ch;
@@ -6833,13 +6848,36 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
     S.resumeAt = 0; S.frozenSince = 0; S.stallLogged = false; S.lastGood = 0; S.retrying = false;
     log('play', ch.n);
     syncVlcLinks(ch);
+    var vlcM = (S.cfg && S.cfg.vlcMode) ? S.cfg.vlcMode : 0;
+    if (IS_IOS && vlcM === 1) {
+      releaseVideo();
+      recPush(ch);
+      store.set('last_' + S.act, ch.url);
+      if (fromAuto) {
+        showVlcBtn(ch, false, '&#9654; VLC İLE AÇ');
+        showInfo();
+        return;
+      }
+      showBuffer(true, 'VLC ile açılıyor... (Bitince uygulamaya geri döner)');
+      showVlcBtn(ch, false, '&#9654; VLC İLE AÇ (TEKRAR DENE)');
+      showInfo();
+      openInVlc(ch);
+      return;
+    }
     if (IS_IOS && isMkvVod(ch)) {
       releaseVideo();
       recPush(ch);
       store.set('last_' + S.act, ch.url);
-      showBuffer(true, 'iPhone Safari .mkv oynatamaz — Tek dokunuşla VLC ile açın');
-      showVlcBtn(ch, false, '&#9654; VLC İLE AÇ (.MKV)');
-      showInfo();
+      if (vlcM !== 2 && !fromAuto) {
+        showBuffer(true, '.mkv içerik — VLC otomatik açılıyor... (Bitince geri döner)');
+        showVlcBtn(ch, false, '&#9654; VLC İLE AÇ (.MKV)');
+        showInfo();
+        openInVlc(ch);
+      } else {
+        showBuffer(true, 'iPhone Safari .mkv oynatamaz — Tek dokunuşla VLC ile açın');
+        showVlcBtn(ch, false, '&#9654; VLC İLE AÇ (.MKV)');
+        showInfo();
+      }
       return;
     }
     if (IS_IOS && isNationalChannel(ch)) {
@@ -6868,16 +6906,32 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
     log('retry', rw + ' → deneme ' + S.retry + ' | ' + netInfo());
     if (IS_IOS) {
       var iosFmtErr = (rw === 'hata 3' || rw === 'hata 4');
+      var iosVlcM = (S.cfg && S.cfg.vlcMode) ? S.cfg.vlcMode : 0;
       showVlcBtn(S.playing, false, iosFmtErr ? '&#9654; VLC İLE AÇ (SAFARI DESTEKLEMİYOR)' : '&#9654; TEK DOKUNUŞLA VLC İLE AÇ');
       if (iosFmtErr && !S.everPlayed && (S.playing.t > 0 || S.retry >= 2)) {
         S.retrying = false;
         releaseVideo();
-        showBuffer(true, 'Safari bu yayın kodeğini oynatamadı — Tek dokunuşla VLC ile açın');
+        if (iosVlcM === 0 && !S.vlcAutoTried) {
+          S.vlcAutoTried = true;
+          showBuffer(true, 'Safari bu yayını desteklemiyor — VLC otomatik açılıyor...');
+          openInVlc(S.playing);
+        } else {
+          showBuffer(true, 'Safari bu yayın kodeğini oynatamadı — Tek dokunuşla VLC ile açın');
+        }
         return;
       }
     }
     if (S.retry > cap) {
       var failCh = S.playing;
+      if (IS_IOS && failCh && ((S.cfg && S.cfg.vlcMode) || 0) === 0 && !S.vlcAutoTried) {
+        S.vlcAutoTried = true;
+        S.retrying = false;
+        releaseVideo();
+        showVlcBtn(failCh, false, '&#9654; VLC İLE AÇ');
+        showBuffer(true, 'Safari açamadı — VLC otomatik açılıyor...');
+        openInVlc(failCh);
+        return;
+      }
       showBuffer(true, S.everPlayed ? 'Yayın açılamıyor. Başka bir kanal deneyin.' : 'Bu kanal açılmıyor. Diğer paneller taranıyor...');
       log('err', 'vazgeçildi: ' + cap + ' deneme');
       if (failCh && failCh.t === 0 && S.panels.length > 1) {
@@ -7404,6 +7458,7 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
     items.push({ id: 'substyle', name: 'Altyazı boyutu / stili: ' + SUB_STYLES[S.cfg.subStyle || 0] });
     if (S.playing) items.push({ id: 'trk', name: 'Ses ve altyazı parçası seçimi' });
     if (S.playing && !S.optT.ch && /^https?:\/\//i.test(S.playing.url || '')) items.push({ id: 'vlc', name: '\u25B6 VLC ile Aç (Harici Oynatıcı)' });
+    if (IS_IOS) items.push({ id: 'vlcmode', name: '\u2699 iPhone VLC Modu: ' + VLC_MODES[S.cfg.vlcMode || 0] });
     if (S.playing && hasBackup()) items.push({ id: 'srv', name: S.altOn ? 'Ana sunucuya dön' : 'Yedek sunucuya geç' });
     items.push({ id: 'greset', name: 'Bu sekmede kategori sırasını ve gizli kategorileri sıfırla' });
     items.push({ id: 'showhid', name: S.showHid ? 'Gizlenenleri sakla' : 'Gizlenenleri göster (' + S.hidN + ' gizli kanal)' });
@@ -7460,6 +7515,14 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
     if (it.id === 'none') return;
     if (t.trk) { trkPick(it); return; }
     if (it.id === 'vlc') { var vCh = c || S.playing; optBack(); if (vCh) openInVlc(vCh); return; }
+    if (it.id === 'vlcmode') {
+      S.cfg.vlcMode = ((S.cfg.vlcMode || 0) + 1) % VLC_MODES.length;
+      saveCfg();
+      it.name = '\u2699 iPhone VLC Modu: ' + VLC_MODES[S.cfg.vlcMode];
+      optList.render();
+      toast('iPhone VLC Modu: ' + VLC_MODES[S.cfg.vlcMode], 2200);
+      return;
+    }
     if (it.id === 'pcheck') { optBack(); openPlist(); checkAllPanels(true); return; }
     if (it.id === 'autofail') {
       S.cfg.autoFailover = S.cfg.autoFailover ? 0 : 1;
@@ -7662,7 +7725,11 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
 
   /* ---------- ayarlar ---------- */
   function cfgItems() {
-    return [
+    var arr = [];
+    if (IS_IOS) {
+      arr.push({ id: 'vlcmode', name: 'iPhone VLC oynatma modu (otomatik VLC & geri dönüş)', val: VLC_MODES[S.cfg.vlcMode || 0] });
+    }
+    return arr.concat([
       { id: 'xl', name: 'Görünüm boyutu (uzak mesafe / büyük punto)', val: S.cfg.xl ? 'NET GÖRÜŞ XL (10 Dev Satır)' : 'Standart (14 Satır)' },
       { id: 'substyle', name: 'Altyazı boyutu ve stili (Film/Dizi)', val: SUB_STYLES[S.cfg.subStyle || 0] },
       { id: 'autofail', name: 'Çalışmayan panelde otomatik sağlam panele geç (Yeşil Bayrak)', val: S.cfg.autoFailover ? 'Açık' : 'Kapalı' },
@@ -7691,7 +7758,7 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
       { id: 'clear', name: 'Günlüğü temizle (' + S.log.length + ' kayıt)', val: 'OK' },
       { id: 'exitapp', name: 'Uygulamayı kapat (TV\'den çık)', val: 'OK' },
       { id: 'close', name: 'Kapat', val: '' }
-    ];
+    ]);
   }
   function cycle(arr, v, dir) {
     var i = 0, k;
@@ -7700,6 +7767,13 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
     return arr[i];
   }
   function cfgChange(it, dir) {
+    if (it.id === 'vlcmode') {
+      S.cfg.vlcMode = ((S.cfg.vlcMode || 0) + dir + VLC_MODES.length) % VLC_MODES.length;
+      saveCfg();
+      cfgList.set(cfgItems(), cfgList.sel);
+      toast('iPhone VLC Modu: ' + VLC_MODES[S.cfg.vlcMode], 2200);
+      return true;
+    }
     if (it.id === 'xl') { setXlMode(!S.cfg.xl); cfgList.set(cfgItems(), cfgList.sel); return true; }
     if (it.id === 'substyle') {
       S.cfg.subStyle = ((S.cfg.subStyle || 0) + dir + SUB_STYLES.length) % SUB_STYLES.length;
@@ -8208,6 +8282,11 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
     var ch = chList.cur();
     if (!ch) return;
     if (ch.sid) { xtOpenSeries(ch); return; }
+    if (IS_IOS && S.cfg && S.cfg.vlcMode === 1) {
+      S.zapList = S.view; S.zapPos = chList.sel;
+      play(ch);
+      return;
+    }
     if (ch === S.playing) { closeList(); return; }
     S.zapList = S.view; S.zapPos = chList.sel;
     if (ch.t === 0) {
@@ -8556,6 +8635,11 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
         T.iosVid = setTimeout(function () {
           if (S.playing === curPlayCh && S.started && !S.userPaused && (video.videoWidth || 0) === 0) {
             showVlcBtn(curPlayCh, false, '&#9654; GÖRÜNTÜ YOK — VLC İLE AÇ');
+            if (((S.cfg && S.cfg.vlcMode) || 0) === 0 && !S.vlcAutoTried) {
+              S.vlcAutoTried = true;
+              showBuffer(true, 'Görüntü kodeği desteklenmiyor — VLC otomatik açılıyor...');
+              openInVlc(curPlayCh);
+            }
           }
         }, 2500);
       }
@@ -8927,6 +9011,21 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
         try { ev.source.postMessage({ type: 'OZKAN_STATE', info: window.OZKAN_API.getEnvInfo() }, '*'); } catch (ep) {}
       }
     }, false);
+    if (IS_IOS) {
+      if (FROM_VLC && window.history && window.history.replaceState) {
+        try {
+          var cleanUrl = String(window.location.href || '').replace(/([?&])fromVlc=1(&?)/g, function (_m, p1, p2) { return p2 ? p1 : ''; }).replace(/[?&]$/, '');
+          window.history.replaceState(null, '', cleanUrl);
+        } catch (eh) {}
+      }
+      document.addEventListener('visibilitychange', function () {
+        if (!document.hidden && S.vlcLaunchedAt) {
+          S.vlcLaunchedAt = 0;
+          showBuffer(false);
+          if (S.cfg && S.cfg.vlcMode === 1 && S.mode !== 'list') openList(false);
+        }
+      }, false);
+    }
     if (window.parent && window.parent !== window) {
       setInterval(function () {
         try { window.parent.postMessage({ type: 'OZKAN_STATE', info: window.OZKAN_API.getEnvInfo() }, '*'); } catch (ep) {}
