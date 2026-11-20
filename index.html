@@ -3826,26 +3826,104 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
     }
     return s;
   }
+  function ckGet(name) {
+    try {
+      var m = new RegExp('(?:^|;\\s*)' + name + '=([^;]*)').exec(document.cookie || '');
+      return m ? decodeURIComponent(m[1]) : '';
+    } catch (e) { return ''; }
+  }
+  function ckSet(name, val) {
+    if (!IS_HTTP_TV) return;
+    try {
+      var enc = encodeURIComponent(String(val || ''));
+      if (enc.length > 3400) return;
+      document.cookie = name + '=' + enc + '; Max-Age=31536000; path=/; SameSite=Lax';
+    } catch (e) {}
+  }
+  function ckDel(name) {
+    if (!IS_HTTP_TV) return;
+    try { document.cookie = name + '=; Max-Age=0; path=/; SameSite=Lax'; } catch (e) {}
+  }
   var store = {
+    writable: true,
+    freeCache: function () {
+      try {
+        var i, ks = [], k;
+        for (i = 0; i < window.localStorage.length; i++) {
+          k = window.localStorage.key(i);
+          if (k && (k.indexOf('pp_cache_') === 0 || k === 'pp_log' || k === 'pp_hourly' || k === 'pp_pstat')) ks.push(k);
+        }
+        for (i = 0; i < ks.length; i++) {
+          try { window.localStorage.removeItem(ks[i]); } catch (e0) {}
+        }
+      } catch (e1) {}
+    },
+    test: function () {
+      try {
+        window.localStorage.setItem('pp__t', '1');
+        var ok = window.localStorage.getItem('pp__t') === '1';
+        window.localStorage.removeItem('pp__t');
+        store.writable = ok;
+        return ok;
+      } catch (e) {
+        store.freeCache();
+        try {
+          window.localStorage.setItem('pp__t', '1');
+          var ok2 = window.localStorage.getItem('pp__t') === '1';
+          window.localStorage.removeItem('pp__t');
+          store.writable = ok2;
+          return ok2;
+        } catch (e2) {
+          store.writable = false;
+          return false;
+        }
+      }
+    },
     get: function (k, d) { try { var v = window.localStorage.getItem('pp_' + k); return v === null ? d : v; } catch (e) { return d; } },
-    set: function (k, v) { try { window.localStorage.setItem('pp_' + k, v); } catch (e) {} },
+    set: function (k, v) {
+      var str = String(v);
+      try {
+        window.localStorage.setItem('pp_' + k, str);
+        return true;
+      } catch (e) {
+        if (k.indexOf('cache_') === 0 || k === 'log' || k === 'hourly') return false;
+        store.freeCache();
+        try {
+          window.localStorage.setItem('pp_' + k, str);
+          return true;
+        } catch (e2) {
+          return false;
+        }
+      }
+    },
     del: function (k) { try { window.localStorage.removeItem('pp_' + k); } catch (e) {} }
   };
-  /* ---------- büyük liste önbelleği (IndexedDB; localStorage ~1.5 MB'a kadar) ---------- */
+  /* ---------- büyük liste önbelleği + kalıcı yedek (IndexedDB; eşzamanlı kuyruk destekli) ---------- */
   var big = {
-    db: null, tried: false,
+    db: null, opening: false, failed: false, q: [],
+    hasIdb: function () { return !!(window.indexedDB || window.webkitIndexedDB); },
+    flush: function (db) {
+      var list = big.q.slice(), i;
+      big.q = [];
+      big.opening = false;
+      for (i = 0; i < list.length; i++) {
+        try { list[i](db); } catch (eq) {}
+      }
+    },
     open: function (cb) {
       var idb = window.indexedDB || window.webkitIndexedDB, rq;
       if (big.db) { cb(big.db); return; }
-      if (!idb || big.tried) { cb(null); return; }
-      big.tried = true;
+      if (!idb || big.failed) { cb(null); return; }
+      big.q.push(cb);
+      if (big.opening) return;
+      big.opening = true;
       try {
         rq = idb.open('pp_cache', 1);
         rq.onupgradeneeded = function () { try { rq.result.createObjectStore('lists'); } catch (e) {} };
-        rq.onsuccess = function () { big.db = rq.result; cb(big.db); };
-        rq.onerror = function () { cb(null); };
-        rq.onblocked = function () { cb(null); };
-      } catch (e2) { cb(null); }
+        rq.onsuccess = function () { big.db = rq.result; big.flush(big.db); };
+        rq.onerror = function () { big.failed = true; big.flush(null); };
+        rq.onblocked = function () { big.failed = true; big.flush(null); };
+      } catch (e2) { big.failed = true; big.flush(null); }
     },
     get: function (id, cb) {
       big.open(function (db) {
@@ -3883,10 +3961,29 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
     for (i = 0; i < t.length; i += st) { h = ((h * 31) + t.charCodeAt(i)) | 0; }
     return t.length + ':' + h;
   }
+  function saveCache(pid, txt) {
+    if (big.hasIdb()) {
+      store.del('cache_' + pid);
+      big.set(pid, txt, function (ok) {
+        if (ok) {
+          store.set('cbig_' + pid, '1');
+          log('list', 'liste IndexedDB önbelleğine kaydedildi (' + Math.round(txt.length / 1024) + ' KB)');
+        } else if (txt.length < (IS_IOS ? 120000 : 1200000)) {
+          store.del('cbig_' + pid);
+          store.set('cache_' + pid, txt);
+        } else {
+          store.del('cbig_' + pid);
+        }
+      });
+    } else if (txt.length < 1200000) {
+      store.set('cache_' + pid, txt);
+      store.del('cbig_' + pid);
+    }
+  }
   function getCache(pid, cb) {
     var c = store.get('cache_' + pid, '');
     if (c) { cb(c); return; }
-    if (store.get('cbig_' + pid, '')) { big.get(pid, cb); return; }
+    if (store.get('cbig_' + pid, '') || big.hasIdb()) { big.get(pid, cb); return; }
     cb('');
   }
   function delCache(pid) {
@@ -4221,7 +4318,11 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
     try { if (window.PalmSystem && window.PalmSystem.platformBack) window.PalmSystem.platformBack(); } catch (e1) {}
     try { window.close(); } catch (e2) {}
   }
-  function saveCfg() { store.set('cfg', JSON.stringify(S.cfg)); }
+  function saveCfg() {
+    var raw = JSON.stringify(S.cfg);
+    store.set('cfg', raw);
+    big.set('__meta_cfg', raw);
+  }
   function isMenu(m) { return m === 'guide' || m === 'pin' || m === 'ask' || m === 'plist' || m === 'settings' || m === 'cfg' || m === 'diag' || m === 'keytest' || m === 'report' || m === 'opt' || m === 'det'; }
   function profIdx() { return S.cfg.match ? 0 : (S.cfg.profile > 2 ? 1 : S.cfg.profile); }
 
@@ -4452,12 +4553,39 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
   }
 
   /* ---------- paneller (çoklu liste ve sağlık kontrolü) ---------- */
-  function savePanels() { store.set('pls', JSON.stringify(S.panels)); store.set('act', S.act); }
+  function savePanels() {
+    var raw = JSON.stringify(S.panels), act = String(S.act || '');
+    var okLs = store.set('pls', raw);
+    store.set('act', act);
+    big.set('__meta_pls', raw);
+    big.set('__meta_act', act);
+    if (S.panels.length) {
+      ckSet('pp_pls_ck', raw);
+      ckSet('pp_act_ck', act);
+    } else {
+      ckDel('pp_pls_ck');
+      ckDel('pp_act_ck');
+    }
+    if (IS_IOS && (window.location.protocol === 'file:' || !okLs)) {
+      toast('Safari bu modda (Dosyalar / Gizli Sekme) kayıt tutmaz — https:// linkini normal sekmede açın', 5000);
+    }
+  }
   function savePStat() { try { store.set('pstat', JSON.stringify(S.pStat)); } catch (e) {} }
   function loadPanels() {
-    try { S.panels = JSON.parse(store.get('pls', '[]')); } catch (e) { S.panels = []; }
+    var rawPls = store.get('pls', '');
+    if (!rawPls || rawPls === '[]') {
+      var ckPls = ckGet('pp_pls_ck');
+      if (ckPls && ckPls !== '[]') {
+        rawPls = ckPls;
+        store.set('pls', ckPls);
+        var ckAct = ckGet('pp_act_ck');
+        if (ckAct) store.set('act', ckAct);
+      }
+    }
+    try { S.panels = JSON.parse(rawPls || '[]'); } catch (e) { S.panels = []; }
+    if (!(S.panels instanceof Array)) S.panels = [];
     try { S.pStat = JSON.parse(store.get('pstat', '{}')) || {}; } catch (e2) { S.pStat = {}; }
-    if (!S.panels || !S.panels.length) {
+    if (!S.panels.length) {
       S.panels = [];
       var old = store.get('m3u', '');
       if (old) {
@@ -4467,7 +4595,7 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
         savePanels();
       }
     } else {
-      S.act = store.get('act', '');
+      S.act = store.get('act', '') || ckGet('pp_act_ck');
     }
     if (S.panels.length && !getPanel(S.act)) S.act = S.panels[0].id;
   }
@@ -5691,14 +5819,7 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
           if (store.get('csig_' + pid, '') === sig(t)) { log('list', 'liste değişmedi'); return; }
         }
         store.set('csig_' + pid, sig(t));
-        if (t.length < 1500000) { store.set('cache_' + pid, t); store.del('cbig_' + pid); big.del(pid); }
-        else {
-          store.del('cache_' + pid);
-          big.set(pid, t, function (ok) {
-            if (ok) { store.set('cbig_' + pid, '1'); log('list', 'büyük liste kaydedildi (' + Math.round(t.length / 1024) + ' KB)'); }
-            else { store.del('cbig_' + pid); log('err', 'liste kaydedilemedi (' + Math.round(t.length / 1024) + ' KB)'); }
-          });
-        }
+        saveCache(pid, t);
         parseM3U(t, auto, !!bg);
       } else { fail(); }
     };
@@ -8217,8 +8338,7 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
           p.name = pName; p.url = 'local://' + file.name; p.host = ''; p.user = ''; p.pass = ''; p.host2 = '';
           S.editId = null; S.act = p.id;
           savePanels();
-          if (txt.length < 1500000) { store.set('cache_' + p.id, txt); store.del('cbig_' + p.id); big.del(p.id); }
-          else { store.del('cache_' + p.id); big.set(p.id, txt, function (ok) { if (ok) store.set('cbig_' + p.id, '1'); }); }
+          saveCache(p.id, txt);
           S.pStat[p.id] = { st: 'ok', msg: 'YEREL DOSYA', ms: 1, at: now() };
           savePStat();
           leaveMenus();
@@ -8600,15 +8720,41 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
       savePanels();
       p = qFound;
     }
+    store.test();
+    if (IS_IOS && big.hasIdb()) store.freeCache();
+    try { if (navigator.storage && typeof navigator.storage.persist === 'function') navigator.storage.persist(); } catch (ePers) {}
+    function bootWithPanel(bp) {
+      var xc0 = xtCreds(bp);
+      if (xc0) loadXtream(bp, xc0, true, false, function () { legacyStart(bp); });
+      else legacyStart(bp);
+      setTimeout(function () { checkAllPanels(false); }, 3500);
+    }
     if (qDemo === '1' || window.location.hash === '#demo') {
       loadDemoChannels();
     } else if (p) {
-      var xc0 = xtCreds(p);
-      if (xc0) loadXtream(p, xc0, true, false, function () { legacyStart(p); });
-      else legacyStart(p);
-    } else { openEditor(null); toast('Başlamak için ilk panelinizi ekleyin'); }
-    if (S.panels.length) {
-      setTimeout(function () { checkAllPanels(false); }, 3500);
+      bootWithPanel(p);
+    } else if (big.hasIdb()) {
+      big.get('__meta_pls', function (idbRaw) {
+        var restored = [];
+        try { restored = JSON.parse(idbRaw || '[]'); } catch (eIdb) { restored = []; }
+        if (restored instanceof Array && restored.length) {
+          S.panels = restored;
+          big.get('__meta_act', function (idbAct) {
+            S.act = (idbAct && getPanel(idbAct)) ? idbAct : S.panels[0].id;
+            savePanels();
+            log('list', 'paneller IndexedDB yedeğinden geri yüklendi (' + S.panels.length + ')');
+            bootWithPanel(getPanel(S.act));
+          });
+        } else {
+          openEditor(null);
+          toast(IS_IOS && window.location.protocol === 'file:'
+            ? 'Dosyalar (file://) kayıt tutmaz — Safari\'de https:// adresinden açın'
+            : 'Başlamak için ilk panelinizi ekleyin', 3600);
+        }
+      });
+    } else {
+      openEditor(null);
+      toast('Başlamak için ilk panelinizi ekleyin');
     }
     function probeWebOSNet() {
       var netDesc = (navigator.onLine === false) ? 'Çevrimdışı' : 'Çevrimiçi';
