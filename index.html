@@ -3543,10 +3543,18 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
     base = base.replace(/([?&])fromVlc=1(&?)/g, function (_m, p1, p2) { return p2 ? p1 : ''; }).replace(/[?&]$/, '');
     return base + (base.indexOf('?') > -1 ? '&' : '?') + 'fromVlc=1';
   }
+  function sanitizeVlcUrl(u) {
+    var s = trim(String(u || '')).replace(/[\r\n\t]+/g, '');
+    if (!/^https?:\/\//i.test(s)) return '';
+    return s.replace(/[^\x21-\x7E]|[\[\]<>"{}|\\^\x60]/g, function (ch) {
+      try { return encodeURIComponent(ch); } catch (e) { return ''; }
+    });
+  }
   function vlcDeepLink(u) {
-    if (!u || !/^https?:\/\//i.test(String(u))) return '#';
+    var clean = sanitizeVlcUrl(u);
+    if (!clean) return '#';
     var ret = vlcReturnUrl();
-    return 'vlc-x-callback://x-callback-url/stream?url=' + encodeURIComponent(String(u)) +
+    return 'vlc-x-callback://x-callback-url/stream?url=' + encodeURIComponent(clean) +
       (ret ? '&x-success=' + encodeURIComponent(ret) + '&x-error=' + encodeURIComponent(ret) + '&x-source=OZKAN%20PLAYER' : '');
   }
   function toBrowserLiveUrl(u, ch) {
@@ -3579,13 +3587,13 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
     if (b) { b.style.display = 'none'; b.className = ''; }
   }
   function openInVlc(ch) {
-    var raw = rawStreamUrl(ch);
-    if (!raw || !/^https?:\/\//i.test(raw)) {
+    var raw = sanitizeVlcUrl(rawStreamUrl(ch));
+    if (!raw) {
       toast('VLC için geçerli yayın adresi yok', 1800);
       return;
     }
     S.vlcLaunchedAt = now();
-    try { video.pause(); } catch (ep) {}
+    releaseVideo();
     S.userPaused = true;
     window.location.href = vlcDeepLink(raw);
   }
@@ -5378,7 +5386,7 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
       if (!s) continue;
       if (kind === 'vod') {
         if (s.stream_id === undefined) continue;
-        ext = s.container_extension || 'mp4';
+        ext = trim(String(s.container_extension || 'mp4')).replace(/^\.+/, '') || 'mp4';
         out.push({ n: trim(String(s.name || 'Film')), g: name, t: 1, vid: String(s.stream_id), ic: s.stream_icon || '',
           url: c.host + '/movie/' + c.user + '/' + c.pass + '/' + s.stream_id + '.' + ext });
       } else {
@@ -5411,7 +5419,7 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
       for (i = 0; i < arr.length; i++) {
         ep = arr[i];
         if (!ep || ep.id === undefined) continue;
-        ext = ep.container_extension || 'mp4';
+        ext = trim(String(ep.container_extension || 'mp4')).replace(/^\.+/, '') || 'mp4';
         en = parseInt(ep.episode_num, 10) || (i + 1);
         title = trim(String(ep.title || ''));
         o = { n: 'B' + en + (title ? ' - ' + title : ''), g: nm, t: 2, ep: en, par: par || null,
@@ -8488,14 +8496,15 @@ body.mob.ios #vbList { left: 83%;   width: 16%; }
       var el = $(id);
       if (!el) return;
       el.onclick = function (e) {
-        var raw = rawStreamUrl(S.playing);
-        if (!raw || !/^https?:\/\//i.test(raw)) {
+        var raw = sanitizeVlcUrl(rawStreamUrl(S.playing));
+        if (!raw) {
           stop(e);
           toast('Önce bir kanal veya film seçin', 1600);
           return;
         }
         el.setAttribute('href', vlcDeepLink(raw));
-        try { video.pause(); } catch (ep) {}
+        S.vlcLaunchedAt = now();
+        releaseVideo();
         S.userPaused = true;
       };
     }
